@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           set -Eeuo pipefail
-          pip install --no-cache-dir -r requirements.txt
+          pip install -r requirements.txt
 
       - name: Generate OpenAPI JSON
         run: |
