@@ -1,0 +1,92 @@
+name: Docs Self-Healing & Linting
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check-doc-drift:
+    name: Enforce Doc Updates on Code Changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Check for modified source files
+        id: diff-check
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          # Get the base branch and HEAD to compare robustly
+          BASE_REF="origin/${GITHUB_BASE_REF:-main}"
+          
+          echo "Comparing HEAD to $BASE_REF"
+          
+          # Initialize state
+          CODE_CHANGED="false"
+          DOCS_CHANGED="false"
+
+          # Use NUL-terminated output and safe reading to prevent word splitting issues
+          while IFS= read -r -d $'\0' file; do
+            if [[ "$file" =~ \.(ts|js|jsx|tsx|py|go|java|rb|rs|php|cpp|c|h|cs)$ ]]; then
+              CODE_CHANGED="true"
+            elif [[ "$file" =~ ^(docs/|\.github/|README\.md|CHANGELOG\.md|openapi\.yaml) ]]; then
+              DOCS_CHANGED="true"
+            fi
+          done < <(git diff --name-only -z "$BASE_REF" HEAD)
+
+          if [[ "$CODE_CHANGED" == "true" && "$DOCS_CHANGED" == "false" ]]; then
+            echo "drift_detected=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift_detected=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post PR Comment & Fail
+        if: steps.diff-check.outputs.drift_detected == 'true'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: "🚨 **Doc Drift Detected!**\n\nYou have modified source code files, but no updates were made in the `docs/` directory, `README.md`, or OpenAPI specs.\n\nTo adhere to our self-healing documentation strategy, please ensure the Architecture, Guides, or API Contracts reflect your logic changes before merging."
+            });
+            core.setFailed("Self-healing docs check failed: Code changed without corresponding doc updates.");
+
+  lint-openapi:
+    name: Validate OpenAPI Specification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: '20'
+
+      - name: Run Spectral Linter
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx --yes @stoplight/spectral-cli lint docs/api/openapi.yaml --ruleset spectral:oas

@@ -1,0 +1,184 @@
+name: Deploy API Documentation
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  generate-openapi-spec:
+    name: Generate OpenAPI Spec
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # v5.0.0
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          pip install --no-cache-dir -r requirements.txt
+
+      - name: Generate OpenAPI JSON
+        run: |
+          set -Eeuo pipefail
+          mkdir -p openapi-output
+          python -c '
+          import json
+          from app.main import app
+          
+          with open("openapi-output/openapi.json", "w") as f:
+              json.dump(app.openapi(), f, indent=2)
+          '
+
+      - name: Upload OpenAPI Artifact
+        uses: actions/upload-artifact@1746f4ab65b179e0ea60a494b83293b640dd5bba # v4.3.0
+        with:
+          name: openapi-artifact
+          path: openapi-output/openapi.json
+          if-no-files-found: error
+
+  deploy-swagger-ui:
+    name: Deploy Swagger UI
+    runs-on: ubuntu-24.04
+    needs: generate-openapi-spec
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: "${{ steps.deployment.outputs.page_url }}"
+    steps:
+      - name: Download OpenAPI Artifact
+        uses: actions/download-artifact@87c55149d96e628ce2cb7b45037d9954d2410a01 # v4.1.0
+        with:
+          name: openapi-artifact
+          path: public/
+
+      - name: Build Swagger UI site
+        run: |
+          set -Eeuo pipefail
+          
+          # Setup directory
+          mkdir -p public/swagger-ui
+          
+          # Download Swagger UI dist files
+          wget -qO swagger-ui.tar.gz https://registry.npmjs.org/swagger-ui-dist/-/swagger-ui-dist-5.11.0.tgz
+          tar -xzf swagger-ui.tar.gz -C public/swagger-ui --strip-components=1 package
+          
+          # Create index.html
+          cat << "EOF" > public/index.html
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <title>DocGuard API — Interactive Documentation</title>
+            <link rel="stylesheet" type="text/css" href="./swagger-ui/swagger-ui.css" />
+            <link rel="stylesheet" type="text/css" href="./swagger-ui/index.css" />
+            <style>
+              html {
+                box-sizing: border-box;
+                overflow: -moz-scrollbars-vertical;
+                overflow-y: scroll;
+              }
+              *, *:before, *:after {
+                box-sizing: inherit;
+              }
+              body {
+                margin: 0;
+                background-color: #1a1a1a;
+                color: #e0e0e0;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+              }
+              .swagger-ui .topbar {
+                background-color: #2c2c2c;
+                padding: 10px 0;
+              }
+              .swagger-ui .info hgroup.main {
+                color: #ffffff;
+              }
+              .swagger-ui .info h2, .swagger-ui .info a {
+                color: #4da6ff;
+              }
+              .swagger-ui .scheme-container {
+                background-color: #2c2c2c;
+                box-shadow: none;
+              }
+              .swagger-ui .opblock {
+                background: #2a2a2a;
+              }
+              .swagger-ui .opblock-summary-control {
+                color: #e0e0e0;
+              }
+              .swagger-ui table thead tr th,
+              .swagger-ui .parameter__name,
+              .swagger-ui .parameter__type {
+                color: #e0e0e0;
+              }
+              .swagger-ui .model-title,
+              .swagger-ui .model {
+                color: #e0e0e0;
+              }
+              .header-title {
+                text-align: center;
+                padding: 20px;
+                background-color: #111;
+                color: #fff;
+                border-bottom: 1px solid #333;
+                font-size: 24px;
+                font-weight: bold;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="header-title">DocGuard API — Interactive Documentation</div>
+            <div id="swagger-ui"></div>
+            <script src="./swagger-ui/swagger-ui-bundle.js" charset="UTF-8"></script>
+            <script src="./swagger-ui/swagger-ui-standalone-preset.js" charset="UTF-8"></script>
+            <script>
+            window.onload = function() {
+              const ui = SwaggerUIBundle({
+                url: "./openapi.json",
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                  SwaggerUIBundle.presets.apis,
+                  SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                  SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout"
+              });
+              window.ui = ui;
+            };
+            </script>
+          </body>
+          </html>
+          EOF
+
+      - name: Setup Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: public/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

@@ -1,0 +1,332 @@
+openapi: 3.1.0
+info:
+  title: User Management Service API
+  version: 1.0.0
+  description: |
+    Comprehensive API for managing users, roles, and permissions within the system.
+    This service handles authentication, identity provisioning, and access control.
+  contact:
+    name: API Engineering Team
+    email: api-engineering@example.com
+    url: https://developer.example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: https://api.production.example.com/v1
+    description: Production Environment
+  - url: https://api.staging.example.com/v1
+    description: Staging Environment
+tags:
+  - name: Health
+    description: System health and monitoring endpoints
+  - name: Users
+    description: User identity management
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      summary: System Health Check
+      description: Returns the health status of the API and its downstream dependencies.
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: API is healthy and operational.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: Service Unavailable. One or more dependencies are failing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /users:
+    get:
+      summary: List Users
+      description: Retrieves a paginated list of users in the system.
+      tags:
+        - Users
+      parameters:
+        - name: page
+          in: query
+          description: Page number for pagination
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: A paginated list of users
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      summary: Create User
+      description: Provisions a new user account with specified roles.
+      tags:
+        - Users
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: User successfully created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Conflict - User with this email already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /users/{userId}:
+    get:
+      summary: Get User by ID
+      description: Retrieves detailed information for a specific user.
+      tags:
+        - Users
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Unique identifier of the user
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Deactivate User
+      description: Soft-deletes a user account, revoking active sessions.
+      tags:
+        - Users
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Unique identifier of the user
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: User successfully deactivated
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT Authorization header using the Bearer scheme.
+  responses:
+    BadRequest:
+      description: Bad Request. The input did not pass validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Unauthorized. Authentication token is missing or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Forbidden. Authenticated user lacks required permissions.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Not Found. The requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    HealthStatus:
+      type: object
+      required:
+        - status
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum: [pass, fail, warn]
+          description: Overall health of the service
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of the check
+        version:
+          type: string
+          description: Semantic version of the running application
+    User:
+      type: object
+      required:
+        - id
+        - email
+        - firstName
+        - lastName
+        - roles
+        - status
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the user
+        email:
+          type: string
+          format: email
+          description: Primary email address used for login
+        firstName:
+          type: string
+          description: Given name
+        lastName:
+          type: string
+          description: Family name
+        roles:
+          type: array
+          items:
+            type: string
+            enum: [admin, user, auditor]
+          description: RBAC roles assigned to the user
+        status:
+          type: string
+          enum: [active, inactive, suspended]
+          description: Current account status
+        createdAt:
+          type: string
+          format: date-time
+          description: Timestamp of account creation
+        lastLoginAt:
+          type: string
+          format: date-time
+          description: Timestamp of most recent successful login
+    UserCreate:
+      type: object
+      required:
+        - email
+        - password
+        - firstName
+        - lastName
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          format: password
+          minLength: 12
+          maxLength: 128
+          description: Must contain at least one uppercase, one lowercase, one number, and one special character.
+        firstName:
+          type: string
+          maxLength: 100
+        lastName:
+          type: string
+          maxLength: 100
+        roles:
+          type: array
+          items:
+            type: string
+            enum: [admin, user, auditor]
+          default: [user]
+    UserList:
+      type: object
+      required:
+        - data
+        - metadata
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+        metadata:
+          type: object
+          required:
+            - total
+            - page
+            - limit
+          properties:
+            total:
+              type: integer
+              description: Total number of records across all pages
+            page:
+              type: integer
+              description: Current page number
+            limit:
+              type: integer
+              description: Number of items requested per page
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Application-specific error code
+        message:
+          type: string
+          description: Human-readable error description
+        details:
+          type: array
+          description: List of specific validation errors or constraints violated
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              issue:
+                type: string
